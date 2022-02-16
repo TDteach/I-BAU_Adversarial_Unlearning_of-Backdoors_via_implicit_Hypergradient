@@ -28,7 +28,7 @@ class DifferentiableOptimizer:
 
     def get_opt_params(self, params):
         opt_params = [p for p in params]
-        opt_params.extend([torch.zeros_like(p) for p in params for _ in range(self.dim_mult-1) ])
+        opt_params.extend([torch.zeros_like(p) for p in params for _ in range(self.dim_mult - 1)])
         return opt_params
 
     def step(self, params, hparams, create_graph):
@@ -45,6 +45,7 @@ class DifferentiableOptimizer:
         else:
             self.curr_loss = self.loss_f(params, hparams)
         return self.curr_loss
+
 
 class GradientDescent(DifferentiableOptimizer):
     def __init__(self, loss_f, step_size, data_or_iter=None):
@@ -71,11 +72,13 @@ def grad_unused_zero(output, inputs, grad_outputs=None, retain_graph=False, crea
 
     return tuple(grad_or_zeros(g, v) for g, v in zip(grads, inputs))
 
+
 def get_outer_gradients(outer_loss, params, hparams, retain_graph=True):
     grad_outer_w = grad_unused_zero(outer_loss, params, retain_graph=retain_graph)
     grad_outer_hparams = grad_unused_zero(outer_loss, hparams, retain_graph=retain_graph)
 
     return grad_outer_w, grad_outer_hparams
+
 
 def update_tensor_grads(hparams, grads):
     for l, g in zip(hparams, grads):
@@ -87,7 +90,7 @@ def update_tensor_grads(hparams, grads):
 
 def fixed_point(params: List[Tensor],
                 hparams: List[Tensor],
-                K: int ,
+                K: int,
                 fp_map: Callable[[List[Tensor], List[Tensor]], List[Tensor]],
                 outer_loss: Callable[[List[Tensor], List[Tensor]], Tensor],
                 tol=1e-10,
@@ -115,6 +118,7 @@ def fixed_point(params: List[Tensor],
     if not stochastic:
         w_mapped = fp_map(params, hparams)
 
+    # K step of fixed-point method, AID-FP of paper "https://arxiv.org/pdf/2006.16218.pdf"
     vs = [torch.zeros_like(w) for w in params]
     vs_vec = cat_list_to_tensor(vs)
     for k in range(K):
@@ -126,21 +130,24 @@ def fixed_point(params: List[Tensor],
         else:
             vs = torch_grad(w_mapped, params, grad_outputs=vs, retain_graph=True)
 
-        vs = [v + gow for v, gow in zip(vs, grad_outer_w)]
+        vs = [v + gow for v, gow in zip(vs, grad_outer_w)]  # Eq.19 of paper "https://arxiv.org/pdf/2006.16218.pdf"
         vs_vec = cat_list_to_tensor(vs)
-        if float(torch.norm(vs_vec - vs_prev_vec)) < tol:
+        diff = torch.norm(vs_vec-vs_prev_vec)
+        if diff.data < tol:
             break
 
     if stochastic:
         w_mapped = fp_map(params, hparams)
 
-    grads = torch_grad(w_mapped, hparams, grad_outputs=vs, allow_unused=True)
-    grads = [g + v if g is not None else v for g, v in zip(grads, grad_outer_hparams)]
+    grads = torch_grad(w_mapped, hparams, grad_outputs=vs, allow_unused=True)  # the second adding term of Eq.9
+    grads = [g + v if g is not None else v for g, v in
+             zip(grads, grad_outer_hparams)]  # Eq.9 of paper "https://arxiv.org/pdf/2006.16218.pdf"
 
     if set_grad:
         update_tensor_grads(hparams, grads)
 
     return grads
+
 
 def cat_list_to_tensor(list_tx):
     return torch.cat([xx.reshape([-1]) for xx in list_tx])
